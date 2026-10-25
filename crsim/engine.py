@@ -285,6 +285,9 @@ class Battle:
         ps.queue.append(card)
         self.players[1 - p].seen.append((card, action.x, HEIGHT - action.y))
         x, y = to_local(action.x, action.y, p)
+        if self.record:
+            self.frames.append({"play": [p, card.name, round(x, 1), round(y, 1),
+                                         round(self.t, 1)]})
         m = level_mult(ps.level)
         if card.kind == "spell":
             self.spells.append([self.t + card.travel, p, card, x, y, m])
@@ -498,7 +501,7 @@ class Battle:
             "elixir": [round(ps.elixir, 2) for ps in self.players],
             "crowns": list(self.crowns),
             "e": [[e.name, e.owner, round(e.x, 2), round(e.y, 2),
-                   round(max(e.hp, 0) / e.max_hp, 3), int(e.air), e.kind]
+                   round(max(e.hp, 0) / e.max_hp, 3), int(e.air), e.kind, e.id]
                   for e in self.entities],
         }
 

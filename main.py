@@ -4,6 +4,7 @@ Examples:
     python main.py battle --deck giant_beatdown --opponent strategic --replay replay.html
     python main.py tune --generations 8 --out best_strategy.json
     python main.py ladder --strategy best_strategy.json --battles 400
+    python main.py showcase --out battles.html
 """
 import argparse
 import os
@@ -12,8 +13,8 @@ import random
 from crsim.agents import AGENTS, StrategicAgent
 from crsim.cards import DECKS
 from crsim.engine import Battle
-from crsim.ladder import run_ladder
-from crsim.replay import export_html
+from crsim.ladder import arena_for, opponent_for, run_ladder
+from crsim.replay import export_games
 from crsim import tune as tuning
 
 
@@ -38,8 +39,39 @@ def cmd_battle(a):
           f"{r.crowns[0]}-{r.crowns[1]} in {r.duration:.0f}s; "
           f"elixir spent {r.spent[0]:.0f}/{r.spent[1]:.0f}, leaked {r.leaked[0]:.1f}")
     if a.replay:
-        export_html(r.frames, a.replay, f"{deck} vs {opp_deck}: {outcome}")
+        export_games([(r.frames, game_meta(r, deck, a.level, opp_deck, a.opponent_level,
+                                           a.opponent))], a.replay)
         print(f"replay written to {a.replay}")
+
+
+def deck_name(cards):
+    return next((k for k, v in DECKS.items() if v == cards), "custom")
+
+
+def game_meta(r, deck, level, opp_deck, opp_level, opp_agent, trophies=None):
+    return {"result": {0: "WIN", 1: "LOSS", -1: "DRAW"}[r.winner],
+            "crowns": list(r.crowns), "duration": round(r.duration, 1),
+            "my_deck": deck, "my_level": round(level, 1),
+            "opp_deck": opp_deck, "opp_level": round(opp_level, 1),
+            "opp_agent": opp_agent, "trophies": trophies}
+
+
+def cmd_showcase(a):
+    """Record ladder games at several trophy counts and write a replay page."""
+    deck, params = load_strategy(a.strategy)
+    deck = a.deck or deck or "giant_beatdown"
+    games = []
+    for trophies in a.trophies:
+        rng = random.Random(a.seed * 7919 + trophies)
+        opp, opp_cards, opp_level = opponent_for(trophies, rng)
+        r = Battle([DECKS[deck], opp_cards], [StrategicAgent(params), opp],
+                   levels=(a.level, opp_level), seed=rng.randrange(1 << 30), record=True).run()
+        meta = game_meta(r, deck, a.level, deck_name(opp_cards), opp_level, opp.name, trophies)
+        print(f"{trophies:5d} trophies ({arena_for(trophies)}): {meta['result']} "
+              f"{r.crowns[0]}-{r.crowns[1]} vs {meta['opp_deck']} ({opp.name}, lv {opp_level:.1f})")
+        games.append((r.frames, meta))
+    export_games(games, a.out)
+    print(f"replays written to {a.out}")
 
 
 def cmd_tune(a):
@@ -86,15 +118,22 @@ def main():
     lad.add_argument("--plateau", type=int, default=80,
                      help="stop after this many battles without a new peak (0 = never)")
 
-    for p in (b, t, lad):
+    sh = sub.add_parser("showcase", help="record games across the ladder into one replay page")
+    sh.add_argument("--deck", choices=sorted(DECKS))
+    sh.add_argument("--trophies", type=int, nargs="+",
+                    default=[1500, 4500, 6500, 7500, 8000, 9000])
+    sh.add_argument("--out", default="battles.html")
+
+    for p in (b, t, lad, sh):
         p.add_argument("--level", type=float, default=11, help="your card level")
         p.add_argument("--seed", type=int, default=0)
-    for p in (b, lad):
+    for p in (b, lad, sh):
         p.add_argument("--strategy", default="best_strategy.json",
                        help="tuned strategy JSON (from `tune`)")
 
     a = ap.parse_args()
-    {"battle": cmd_battle, "tune": cmd_tune, "ladder": cmd_ladder}[a.cmd](a)
+    {"battle": cmd_battle, "tune": cmd_tune, "ladder": cmd_ladder,
+     "showcase": cmd_showcase}[a.cmd](a)
 
 
 if __name__ == "__main__":

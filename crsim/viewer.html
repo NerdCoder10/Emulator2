@@ -1,0 +1,295 @@
+<title>Battle Theater</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: broadcast booth. Game reel on top, arena on the left, scoreboard and play-by-play on the right. */
+:root {
+  --bg: #e9edf1;
+  --panel: #f8fafb;
+  --fg: #17202a;
+  --muted: #5d6a78;
+  --line: #cdd5de;
+  --blue: #2a64d6;
+  --red: #cf3b33;
+  --gold: #c48a0e;
+  --elixir: #b03fc4;
+  --win: #1f8a4c;
+  --loss: #c0392b;
+  --grass-a: #6fae4f;
+  --grass-b: #67a648;
+  --water: #3f8ccf;
+  --wood: #9a7445;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11161c; --panel: #19212a; --fg: #e6ebf0; --muted: #8e9bab; --line: #2b3642;
+    --blue: #5a8df0; --red: #ee6159; --gold: #e3ad37; --elixir: #d06ae2;
+    --win: #43c07a; --loss: #f06a5c; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11161c; --panel: #19212a; --fg: #e6ebf0; --muted: #8e9bab; --line: #2b3642;
+  --blue: #5a8df0; --red: #ee6159; --gold: #e3ad37; --elixir: #d06ae2;
+  --win: #43c07a; --loss: #f06a5c; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 32px;
+}
+.wrap { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+header h1 {
+  font-family: var(--display); font-weight: 800; font-size: 2.4rem; letter-spacing: .01em;
+  text-transform: uppercase; margin: 0; line-height: 1; text-wrap: balance;
+}
+header p { margin: 6px 0 0; color: var(--muted); max-width: 65ch; }
+.reel { display: flex; gap: 8px; flex-wrap: wrap; }
+.reel button {
+  font: inherit; text-align: left; cursor: pointer; color: var(--fg);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  padding: 8px 12px; display: grid; gap: 2px; min-width: 0;
+}
+.reel button[aria-pressed="true"] { border-color: var(--fg); box-shadow: inset 0 0 0 1px var(--fg); }
+.reel .tr { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.reel .vs { font-weight: 500; }
+.res { font-family: var(--display); font-weight: 700; letter-spacing: .04em; }
+.res.WIN { color: var(--win); } .res.LOSS { color: var(--loss); } .res.DRAW { color: var(--muted); }
+.stage { display: grid; grid-template-columns: minmax(0, 440px) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 760px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+.board { position: relative; width: 100%; max-width: 440px; aspect-ratio: 18 / 32; border-radius: 8px; overflow: hidden; margin: 0 auto; }
+.board canvas { width: 100%; height: 100%; display: block; }
+.banner {
+  position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
+  background: rgba(10, 14, 20, .55); color: #fff; font-family: var(--display);
+}
+.banner b { font-size: 3.4rem; font-weight: 800; letter-spacing: .04em; line-height: 1; }
+.banner span { font-size: 1.3rem; font-weight: 600; }
+.side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.score { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 12px; }
+.teams { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; }
+.team { min-width: 0; display: grid; gap: 2px; }
+.team.r { text-align: right; }
+.team .nm { font-family: var(--display); font-weight: 700; font-size: 1.25rem; text-transform: uppercase; letter-spacing: .03em; }
+.team.b .nm { color: var(--blue); } .team.r .nm { color: var(--red); }
+.team .sub { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.crowns { font-family: var(--display); font-weight: 800; font-size: 2.6rem; line-height: 1; font-variant-numeric: tabular-nums; display: flex; gap: 10px; align-items: baseline; }
+.crowns i { font-style: normal; color: var(--gold); font-size: 1.1rem; }
+.clockrow { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.clock { font-family: var(--mono); font-size: 1.3rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+.chip { font-family: var(--display); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 13px; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
+.chip.hot { color: var(--elixir); border-color: var(--elixir); }
+.elx { display: grid; grid-template-columns: 52px 1fr 34px; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.elx .num { font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; color: var(--fg); }
+.bar { height: 10px; border-radius: 3px; background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), var(--panel) calc(10% - 1px) 10%), var(--line); position: relative; overflow: hidden; }
+.bar > div { position: absolute; inset: 0 auto 0 0; background: var(--elixir); }
+.controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.controls button { font: 600 13px var(--body); padding: 6px 12px; border-radius: 5px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer; }
+.controls button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+#play { min-width: 74px; }
+#seek { flex: 1 1 160px; accent-color: var(--elixir); min-width: 0; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--elixir); outline-offset: 2px; }
+.log { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; min-height: 0; }
+.log h2 { font-family: var(--display); font-size: 1rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+.log ol { position: relative; list-style: none; margin: 0; padding: 6px 0; max-height: 300px; overflow-y: auto; }
+.log li { display: grid; grid-template-columns: 48px 12px 1fr auto; gap: 8px; align-items: center; padding: 3px 16px; opacity: .38; }
+.log li.on { opacity: 1; }
+.log li.now { background: color-mix(in srgb, var(--elixir) 12%, transparent); }
+.log .tm { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dot { width: 10px; height: 10px; border-radius: 50%; }
+.dot.b { background: var(--blue); } .dot.r { background: var(--red); }
+.log .cost { font-family: var(--mono); font-size: 12px; color: var(--elixir); }
+.note { color: var(--muted); font-size: 12px; max-width: 65ch; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Battle Theater</h1>
+    <p>Recorded games from the Clash Royale emulator. Blue is the Claude-tuned AI with level 11 cards; red is a ladder opponent scaled to that trophy count.</p>
+  </header>
+  <nav class="reel" id="reel" aria-label="Games"></nav>
+  <section class="stage">
+    <div class="board" id="board"><canvas id="cv"></canvas><div class="banner" id="banner" hidden><b id="bres"></b><span id="bsub"></span></div></div>
+    <div class="side">
+      <div class="score">
+        <div class="teams">
+          <div class="team b"><span class="nm">Claude AI</span><span class="sub" id="bsubt"></span></div>
+          <div class="crowns"><span id="cb">0</span><i>&#9819;</i><span id="cr">0</span></div>
+          <div class="team r"><span class="nm">Opponent</span><span class="sub" id="rsubt"></span></div>
+        </div>
+        <div class="clockrow"><span class="clock" id="clock">3:00</span><span class="chip" id="mult">Elixir &times;1</span></div>
+        <div class="elx"><span>Blue</span><div class="bar"><div id="eb"></div></div><span class="num" id="ebn">5.0</span></div>
+        <div class="elx"><span>Red</span><div class="bar"><div id="er"></div></div><span class="num" id="ern">5.0</span></div>
+        <div class="controls">
+          <button id="play" type="button">Pause</button>
+          <button type="button" data-speed="1">1&times;</button>
+          <button type="button" data-speed="2" aria-pressed="true">2&times;</button>
+          <button type="button" data-speed="4">4&times;</button>
+          <input id="seek" type="range" min="0" step="0.1" value="0" aria-label="Game time">
+        </div>
+      </div>
+      <div class="log"><h2>Play-by-play</h2><ol id="log"></ol></div>
+      <p class="note">Space toggles play. Drag the slider to scrub. Units are labelled by card initials; air units cast a shadow. Spells flash where they land.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+const GAMES = /*__GAMES__*/[];
+const COST = {"Knight":3,"Archers":3,"Giant":5,"Musketeer":4,"Mini P.E.K.K.A":4,"Valkyrie":4,"Baby Dragon":4,"Hog Rider":4,"Skeleton Army":3,"Skeletons":1,"Minions":3,"Spear Goblins":2,"Barbarians":5,"Wizard":5,"P.E.K.K.A":7,"Balloon":5,"Ice Golem":2,"Cannon":3,"Tesla":4,"Arrows":3,"Zap":2,"Fireball":4,"Rocket":6};
+const SWARM = new Set(["Skeleton Army","Skeletons","Minions","Spear Goblins","Barbarians"]);
+const $ = id => document.getElementById(id);
+const cv = $("cv"), g = cv.getContext("2d");
+let gi = 0, t = 0, playing = true, speed = 2, last = null, logNow = -1;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const abbr = n => n.startsWith("P.E.K") ? "PK" : n.startsWith("Mini") ? "MP" :
+  n.split(" ").map(w => w[0]).join("").slice(0, 2);
+const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+const G = () => GAMES[gi];
+
+function buildReel() {
+  $("reel").innerHTML = "";
+  GAMES.forEach((gm, i) => {
+    const m = gm.meta, b = document.createElement("button");
+    b.type = "button"; b.setAttribute("aria-pressed", i === gi);
+    b.innerHTML = `<span class="tr">${m.trophies ? m.trophies.toLocaleString() + " trophies" : "Exhibition"}</span>
+      <span class="vs">vs ${m.opp_deck}</span>
+      <span class="res ${m.result}">${m.result} ${m.crowns[0]}&ndash;${m.crowns[1]}</span>`;
+    b.onclick = () => load(i);
+    $("reel").appendChild(b);
+  });
+}
+
+function load(i) {
+  gi = i; t = 0; logNow = -1; playing = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  [...$("reel").children].forEach((b, j) => b.setAttribute("aria-pressed", j === i));
+  const m = G().meta;
+  $("bsubt").textContent = `${m.my_deck} · Lv ${m.my_level}`;
+  $("rsubt").textContent = `${m.opp_deck} · Lv ${m.opp_level} · ${m.opp_agent}`;
+  $("seek").max = G().frames.at(-1)[0];
+  $("log").innerHTML = G().plays.map(([p, c, , , pt]) =>
+    `<li><span class="tm">${fmt(pt)}</span><span class="dot ${p ? "r" : "b"}"></span><span>${c}</span><span class="cost">${COST[c] ?? ""}</span></li>`).join("");
+  $("play").textContent = playing ? "Pause" : "Play";
+  draw();
+}
+
+function frameAt(time) {
+  const F = G().frames;
+  let lo = 0, hi = F.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (F[mid][0] <= time) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+
+function size() {
+  const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1;
+  cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d);
+}
+
+function draw() {
+  const gm = G(), F = gm.frames, i = frameAt(t), f = F[i], nx = F[Math.min(i + 1, F.length - 1)];
+  const a = nx[0] > f[0] ? Math.min(1, (t - f[0]) / (nx[0] - f[0])) : 0;
+  const W = cv.width, S = W / 18, X = x => x * S, Y = y => (32 - y) * S;
+  const blue = css("--blue"), red = css("--red");
+  // Arena: checkered grass, river, bridges.
+  for (let r = 0; r < 32; r++) for (let c = 0; c < 18; c++) {
+    g.fillStyle = (r + c) % 2 ? css("--grass-a") : css("--grass-b");
+    g.fillRect(c * S, r * S, S + 1, S + 1);
+  }
+  g.fillStyle = css("--water"); g.fillRect(0, Y(17), W, 2 * S);
+  g.fillStyle = css("--wood"); [3.5, 14.5].forEach(x => g.fillRect(X(x - 1), Y(17) - 2, 2 * S, 2 * S + 4));
+  // Spells that landed in the last second.
+  gm.spells.forEach(([st, name, x, y, rad, p]) => {
+    const age = t - st; if (age < 0 || age > 1) return;
+    g.globalAlpha = 0.45 * (1 - age);
+    g.fillStyle = p ? red : blue; g.beginPath(); g.arc(X(x), Y(y), rad * S, 0, 7); g.fill();
+    g.globalAlpha = 1 - age; g.fillStyle = "#fff"; g.font = `600 ${0.8 * S}px ${css("--body")}`;
+    g.textAlign = "center"; g.fillText(name, X(x), Y(y));
+  });
+  // Deploy rings for cards played in the last second.
+  gm.plays.forEach(([p, c, x, y, pt]) => {
+    const age = t - pt; if (age < 0 || age > 1 || COST[c] === undefined) return;
+    g.globalAlpha = 1 - age; g.strokeStyle = p ? red : blue; g.lineWidth = 2; g.setLineDash([4, 3]);
+    g.beginPath(); g.arc(X(x), Y(y), (1 + age) * S, 0, 7); g.stroke(); g.setLineDash([]);
+  });
+  g.globalAlpha = 1;
+  const next = new Map(nx[5].map(e => [e[7], e]));
+  const ents = [...f[5]].sort((u, v) => u[5] - v[5] || v[6] - u[6]);
+  for (const e of ents) {
+    const [ni, o, x0, y0, hp, air, kind, id] = e, n = gm.names[ni], q = next.get(id);
+    const x = q ? x0 + (q[2] - x0) * a : x0, y = q ? y0 + (q[3] - y0) * a : y0;
+    const px = X(x), py = Y(y), col = o ? red : blue;
+    let r;
+    if (kind === 2) {
+      r = (n.startsWith("king") ? 2 : 1.5) * S;
+      g.fillStyle = col; g.fillRect(px - r, py - r, 2 * r, 2 * r);
+      g.fillStyle = "rgba(255,255,255,.25)"; g.fillRect(px - r * .55, py - r * .55, r * 1.1, r * 1.1);
+      if (n.startsWith("king")) { g.fillStyle = css("--gold"); g.font = `${r}px serif`; g.textAlign = "center"; g.fillText("♛", px, py + r * .35); }
+    } else if (kind === 1) {
+      r = S; g.fillStyle = col; g.fillRect(px - r, py - r, 2 * r, 2 * r);
+      g.strokeStyle = "rgba(0,0,0,.35)"; g.lineWidth = 2; g.strokeRect(px - r, py - r, 2 * r, 2 * r);
+      g.fillStyle = "#fff"; g.font = `700 ${0.8 * S}px ${css("--body")}`; g.textAlign = "center"; g.fillText(abbr(n), px, py + 0.28 * S);
+    } else {
+      r = (SWARM.has(n) ? 0.3 : 0.48) * S;
+      if (air) { g.fillStyle = "rgba(0,0,0,.25)"; g.beginPath(); g.ellipse(px, py + 0.7 * S, r, r * .45, 0, 0, 7); g.fill(); }
+      g.fillStyle = col; g.beginPath(); g.arc(px, py, r, 0, 7); g.fill();
+      g.strokeStyle = air ? "#fff" : "rgba(0,0,0,.35)"; g.lineWidth = air ? 2 : 1; g.stroke();
+      if (!SWARM.has(n)) { g.fillStyle = "#fff"; g.font = `700 ${0.55 * S}px ${css("--body")}`; g.textAlign = "center"; g.fillText(abbr(n), px, py + 0.2 * S); }
+    }
+    if (hp < 1 || kind === 2) {
+      const w = Math.max(2 * r, 0.8 * S);
+      g.fillStyle = "rgba(0,0,0,.55)"; g.fillRect(px - w / 2, py - r - 6, w, 4);
+      g.fillStyle = hp > .5 ? "#4ade80" : hp > .25 ? "#facc15" : "#f87171"; g.fillRect(px - w / 2, py - r - 6, w * hp, 4);
+    }
+  }
+  // Scoreboard.
+  $("cb").textContent = f[3]; $("cr").textContent = f[4];
+  $("clock").textContent = t < 180 ? fmt(180 - t) : `OT ${fmt(Math.max(0, 300 - t))}`;
+  const m = t < 120 ? 1 : t < 240 ? 2 : 3;
+  $("mult").textContent = `Elixir ×${m}`; $("mult").classList.toggle("hot", m > 1);
+  $("eb").style.width = f[1] * 10 + "%"; $("er").style.width = f[2] * 10 + "%";
+  $("ebn").textContent = f[1].toFixed(1); $("ern").textContent = f[2].toFixed(1);
+  $("seek").value = t;
+  // Play-by-play.
+  const items = $("log").children; let now = -1;
+  gm.plays.forEach((p, j) => { const on = p[4] <= t; items[j].classList.toggle("on", on); if (on) now = j; });
+  if (now !== logNow) {
+    if (logNow >= 0 && items[logNow]) items[logNow].classList.remove("now");
+    if (now >= 0) { items[now].classList.add("now"); const ol = $("log"); ol.scrollTop = Math.max(0, items[now].offsetTop - ol.clientHeight / 2); }
+    logNow = now;
+  }
+  const end = t >= F.at(-1)[0];
+  $("banner").hidden = !end;
+  if (end) { $("bres").textContent = gm.meta.result === "WIN" ? "Blue wins" : gm.meta.result === "LOSS" ? "Red wins" : "Draw";
+    $("bsub").textContent = `${gm.meta.crowns[0]}–${gm.meta.crowns[1]} in ${fmt(gm.meta.duration)}`; }
+}
+
+function tick(ts) {
+  if (last !== null && playing) {
+    t = Math.min(G().frames.at(-1)[0], t + (ts - last) / 1000 * speed);
+    if (t >= G().frames.at(-1)[0]) { playing = false; $("play").textContent = "Replay"; }
+    draw();
+  }
+  last = ts; requestAnimationFrame(tick);
+}
+
+$("play").onclick = () => {
+  if (t >= G().frames.at(-1)[0]) t = 0;
+  playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; draw();
+};
+document.querySelectorAll("[data-speed]").forEach(b => b.onclick = () => {
+  speed = +b.dataset.speed;
+  document.querySelectorAll("[data-speed]").forEach(o => o.setAttribute("aria-pressed", o === b));
+});
+$("seek").oninput = () => { t = +$("seek").value; draw(); };
+addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "BUTTON") { e.preventDefault(); $("play").click(); } });
+addEventListener("resize", () => { size(); draw(); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+size(); buildReel(); load(0); requestAnimationFrame(tick);
+</script>
