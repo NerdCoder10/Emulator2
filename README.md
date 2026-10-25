@@ -69,7 +69,7 @@ score better than slow overtime wins.
 | AI | Win rate at 7,500 | Win rate at 8,000 | Peak trophies | Arena |
 | --- | --- | --- | --- | --- |
 | Heuristic (`--agent strategic`) | 40% | 33% | 6,480–6,810 | Royal Crypt / Silent Sanctuary |
-| **Look-ahead planner** (default) | **67%** | **57%** | **8,130–8,280** | **PANCAKES!** |
+| **Look-ahead planner** (default) | **67%** | **57%** | **8,070–8,430** | **PANCAKES!** |
 
 Every planner run passes 7,500 trophies and is still climbing at 500
 battles, against opponents whose cards are 2–3 levels higher. A battle takes

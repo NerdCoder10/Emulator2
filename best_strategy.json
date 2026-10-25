@@ -1,4 +1,5 @@
 {
+  "agent": "planner",
   "deck": "pekka_control",
   "cards": [
     "P.E.K.K.A",
@@ -11,17 +12,17 @@
     "Fireball"
   ],
   "params": {
-    "attack_elixir": 7.541032134615447,
-    "punish_elixir": 1.8682489562872178,
-    "spell_ratio": 1.7489119452836426,
-    "tower_tolerance": 2.438975381510869,
-    "defend_line": 19.66183501217647,
-    "back_tank": 0.42686464454174156,
-    "support_elixir": 2.0891787941291327,
-    "cost_weight": 0.06473240649905729,
-    "leak_guard": 9.573605064392028,
-    "spell_tower_bonus": 2.2174503994281674
+    "attack_elixir": 5.8416204487479755,
+    "punish_elixir": 0.2944611793170795,
+    "spell_ratio": 2.3833068198527085,
+    "tower_tolerance": 0.33393237472142,
+    "defend_line": 18.870182379411894,
+    "back_tank": 0.15895578060739737,
+    "support_elixir": 2.610600901833083,
+    "cost_weight": 0.0,
+    "leak_guard": 9.074468116150053,
+    "spell_tower_bonus": 1.9110166188084157
   },
-  "win_rate": 0.5625,
-  "trophies_per_hour": 62.10569949179844
+  "win_rate": 0.7760416666666666,
+  "trophies_per_hour": 279.7736003988449
 }
