@@ -1,0 +1,27 @@
+{
+  "deck": "pekka_control",
+  "cards": [
+    "P.E.K.K.A",
+    "Wizard",
+    "Mini P.E.K.K.A",
+    "Archers",
+    "Skeleton Army",
+    "Knight",
+    "Zap",
+    "Fireball"
+  ],
+  "params": {
+    "attack_elixir": 7.541032134615447,
+    "punish_elixir": 1.8682489562872178,
+    "spell_ratio": 1.7489119452836426,
+    "tower_tolerance": 2.438975381510869,
+    "defend_line": 19.66183501217647,
+    "back_tank": 0.42686464454174156,
+    "support_elixir": 2.0891787941291327,
+    "cost_weight": 0.06473240649905729,
+    "leak_guard": 9.573605064392028,
+    "spell_tower_bonus": 2.2174503994281674
+  },
+  "win_rate": 0.5625,
+  "trophies_per_hour": 62.10569949179844
+}
