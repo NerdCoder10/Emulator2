@@ -5,8 +5,8 @@ All agents work in local coordinates (own king tower at the bottom, y = 3).
 import math
 import random
 
-from .engine import Action, RIVER_LO, ELIXIR_PERIOD, MAX_ELIXIR, START_ELIXIR, \
-    TOWER_STATS, AGENT_INTERVAL
+from .engine import Action, Battle, RIVER_LO, ELIXIR_PERIOD, MAX_ELIXIR, START_ELIXIR, \
+    TOWER_STATS, AGENT_INTERVAL, DT, HEIGHT
 
 LANE_X = {"left": 3.5, "right": 14.5}
 TOWER_DPS = TOWER_STATS["princess"]["damage"] / TOWER_STATS["princess"]["hit_speed"]
@@ -275,20 +275,22 @@ class StrategicAgent(Agent):
             self.next_ok = obs.time + self.reaction
         return action
 
-    def _decide(self, obs):
-        hand = obs.hand
-        elixir = obs.elixir
-        p = self.p
+    def _threats(self, obs):
+        return [u for u in obs.enemy_units
+                if u.kind == "troop" and u.y < self.p["defend_line"]]
 
+    def _decide(self, obs):
         # 1. Value spells.
         spell = self._best_spell(obs)
         if spell is not None:
             _, card, x, y = spell
             return Action(card.name, x, y)
+        threats = self._threats(obs)
+        return self._defend(obs, threats) or self._offense(obs, threats)
 
-        # 2. Defence.
-        threats = [u for u in obs.enemy_units
-                   if u.kind == "troop" and u.y < p["defend_line"]]
+    def _defend(self, obs, threats):
+        """2. Defence: answer the most advanced push that the towers can't handle."""
+        hand, elixir, p = obs.hand, obs.elixir, self.p
         pushes = self._pushes(threats)
         for lane in sorted(pushes, key=lambda l: min((u.y for u in pushes[l]),
                                                      default=99)):
@@ -312,7 +314,11 @@ class StrategicAgent(Agent):
             _, card = max(options, key=lambda o: o[0])
             x, y = self._defense_spot(card, group, lane)
             return Action(card.name, x, y)
+        return None
 
+    def _offense(self, obs, threats):
+        """Steps 3-5: support a push, start an attack, or avoid leaking elixir."""
+        hand, elixir, p = obs.hand, obs.elixir, self.p
         # 3. Support an existing push.
         pushers = [u for u in obs.my_units
                    if u.kind == "troop" and u.card and u.hp > 0.4 * u.max_hp
@@ -362,9 +368,166 @@ class StrategicAgent(Agent):
         return None
 
 
+PLANNER_PARAMS = {
+    "horizon": 8.0,           # seconds simulated ahead for each candidate
+    "plan_interval": 0.6,     # seconds between plans while nothing is played
+    "tower_value": 3.0,       # elixir per 1000 tower hp
+    "crown_value": 6.0,       # extra elixir-equivalent for taking a tower
+    "danger": 0.5,            # extra weight on enemy units left in our half
+    "min_gain": 0.3,          # a play must beat waiting by this much
+    "max_candidates": 14,
+}
+
+
+class PlannerAgent(StrategicAgent):
+    """StrategicAgent plus look-ahead search for defence and spells.
+
+    Whenever enemy troops approach (or a spell might pay off), it rebuilds the
+    visible board in a sandbox and simulates each candidate play, including
+    waiting, a few seconds forward. It then makes the play with the best
+    outcome: elixir kept, enemy elixir destroyed, tower hp kept and taken.
+    Attacks still use the heuristic rules, since a sandbox opponent that never
+    plays a card would make every attack look free.
+    """
+    name = "planner"
+
+    def __init__(self, params=None, seed=None, mistake=0.0, reaction=0.0, plan=None):
+        super().__init__(params, seed=seed, mistake=mistake, reaction=reaction)
+        self.plan = dict(PLANNER_PARAMS)
+        if plan:
+            self.plan.update(plan)
+
+    def reset(self, player):
+        super().reset(player)
+        self.next_plan = 0.0
+        self.my_spells = []         # spells in flight: [land, owner, card, x, y, mult]
+        self.enemy_spells = []
+
+    # ------------------------------------------------------------------ search
+    @staticmethod
+    def _mult(towers):
+        t = towers["king"]
+        return t.max_hp / TOWER_STATS["king"]["hp"]
+
+    def _score(self, sb, start_towers):
+        pl = self.plan
+        v = sb.players[0].elixir
+        for e in sb.entities:
+            if e.kind == "tower":
+                continue
+            w = e.value * max(e.hp, 0.0) / e.max_hp
+            if e.owner == 0:
+                v += w
+            else:
+                v -= w * (1.0 + (pl["danger"] if e.y < HEIGHT / 2 else 0.0))
+        for owner, sign in ((0, -1.0), (1, 1.0)):
+            for role, hp0 in start_towers[owner].items():
+                tw = sb.towers[owner].get(role)
+                hp = max(tw.hp, 0.0) if tw is not None else 0.0
+                v += sign * (hp0 - hp) / 1000.0 * pl["tower_value"]
+                if hp0 > 0 and hp <= 0:
+                    v += sign * pl["crown_value"]
+        if sb.winner == 0:
+            v += 100.0
+        elif sb.winner == 1:
+            v -= 100.0
+        return v
+
+    def _rollout(self, obs, card=None, x=0.0, y=0.0):
+        sb = Battle.from_observation(obs, self.enemy_spells, self.my_spells)
+        start = [{r: max(t.hp, 0.0) for r, t in sb.towers[o].items()} for o in (0, 1)]
+        if card is not None:
+            sb.inject(0, card, x, y, self._mult(obs.my_towers))
+            sb.players[0].elixir -= card.cost
+        for _ in range(int(self.plan["horizon"] / DT)):
+            sb.step()
+            if sb.winner is not None:
+                break
+        return self._score(sb, start)
+
+    def _candidates(self, obs, threats):
+        cands = []
+        hand = [c for c in obs.hand if c.cost <= obs.elixir]
+        for card in hand:
+            if card.kind == "spell":
+                spots = []
+                for u in obs.enemy_units:
+                    spots.append((self._spell_value(card, u.x, u.y, obs), u.x, u.y))
+                spots.sort(reverse=True)
+                for val, x, y in spots[:2]:
+                    if val >= 0.6 * card.cost:
+                        cands.append((card, x, y))
+                continue
+            if not threats:
+                continue
+            seen = set()
+            for lane, group in self._pushes(threats).items():
+                if not group:
+                    continue
+                lead = min(group, key=lambda u: u.y)
+                spots = [self._defense_spot(card, group, lane),
+                         (lead.x, lead.y - 1.0), (lead.x, lead.y - 4.0)]
+                if card.kind == "building":
+                    spots.append((9.0, 8.0))
+                for sx, sy in spots:
+                    sx, sy = clamp(sx, 0.5, 17.5), clamp(sy, 0.5, RIVER_LO)
+                    key = (round(sx), round(sy))
+                    if key in seen or not obs.can_place(card, sx, sy):
+                        continue
+                    seen.add(key)
+                    cands.append((card, sx, sy))
+        return cands
+
+    def _plan(self, obs, threats):
+        cands = self._candidates(obs, threats)
+        if not cands:
+            return None
+        if len(cands) > self.plan["max_candidates"]:
+            cands = cands[: int(self.plan["max_candidates"])]
+        base = self._rollout(obs)
+        best, best_v = None, base + self.plan["min_gain"]
+        for card, x, y in cands:
+            v = self._rollout(obs, card, x, y)
+            if v > best_v:
+                best, best_v = (card, x, y), v
+        return best
+
+    # ------------------------------------------------------------------ main loop
+    def _track_spells(self, obs):
+        em = self._mult(obs.enemy_towers)
+        for card, x, y in obs.enemy_plays:
+            if card.kind == "spell":
+                self.enemy_spells.append([obs.time + card.travel, 1, card, x, y, em])
+        self.enemy_spells = [s for s in self.enemy_spells if s[0] > obs.time]
+        self.my_spells = [s for s in self.my_spells if s[0] > obs.time]
+
+    def act(self, obs):
+        self._track_spells(obs)
+        action = super().act(obs)
+        if action is not None:
+            card = next(c for c in obs.hand if c.name == action.card)
+            if card.kind == "spell":
+                self.my_spells.append([obs.time + card.travel, 0, card, action.x, action.y,
+                                       self._mult(obs.my_towers)])
+        return action
+
+    def _decide(self, obs):
+        threats = self._threats(obs)
+        if (threats or obs.enemy_units) and obs.time >= self.next_plan:
+            choice = self._plan(obs, threats)
+            if choice is not None:
+                card, x, y = choice
+                return Action(card.name, x, y)
+            self.next_plan = obs.time + self.plan["plan_interval"]
+        if threats:
+            return None
+        return self._offense(obs, threats)
+
+
 AGENTS = {
     "idle": IdleAgent,
     "random": RandomAgent,
     "simple": SimpleAgent,
     "strategic": StrategicAgent,
+    "planner": PlannerAgent,
 }

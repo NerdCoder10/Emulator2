@@ -4,7 +4,7 @@ import os
 import random
 from multiprocessing import Pool
 
-from .agents import DEFAULT_PARAMS, StrategicAgent
+from .agents import AGENTS, DEFAULT_PARAMS
 from .cards import DECKS
 from .engine import Battle
 from .ladder import LOSS_TROPHIES, MATCH_OVERHEAD, WIN_TROPHIES, opponent_for
@@ -27,22 +27,22 @@ EVAL_TROPHIES = (3000, 5500, 7500, 9000)
 
 
 def _eval_one(args):
-    params, deck_name, level, trophies, seed = args
+    agent, params, deck_name, level, trophies, seed = args
     rng = random.Random(seed)
     opp, opp_deck, opp_level = opponent_for(trophies, rng)
-    r = Battle([DECKS[deck_name], opp_deck], [StrategicAgent(params), opp],
+    r = Battle([DECKS[deck_name], opp_deck], [AGENTS[agent](params), opp],
                levels=(level, opp_level), seed=rng.randrange(1 << 30)).run()
     delta = WIN_TROPHIES if r.winner == 0 else (-LOSS_TROPHIES if r.winner == 1 else 0)
     return r.winner == 0, delta, r.duration
 
 
-def evaluate(cands, level, games, seed, pool):
+def evaluate(cands, level, games, seed, pool, agent="planner"):
     """Score candidates on identical opponent seeds (common random numbers)."""
     jobs, index = [], []
     for ci, (params, deck) in enumerate(cands):
         for g in range(games):
             trophies = EVAL_TROPHIES[g % len(EVAL_TROPHIES)]
-            jobs.append((params, deck, level, trophies, seed * 100003 + g))
+            jobs.append((agent, params, deck, level, trophies, seed * 100003 + g))
             index.append(ci)
     results = pool.map(_eval_one, jobs, chunksize=4)
     stats = [[0, 0, 0.0] for _ in cands]
@@ -68,17 +68,21 @@ def mutate(params, rng, scale):
 
 
 def tune(generations=8, population=16, games=48, level=11.0, seed=0,
-         workers=None, decks=None, log=print):
+         workers=None, decks=None, agent="planner", start=None, log=print):
     rng = random.Random(seed)
     decks = decks or sorted(DECKS)
     pool = Pool(workers or os.cpu_count())
     try:
         cands = [(dict(DEFAULT_PARAMS), d) for d in decks]
+        if start:
+            # Continue from a previous result (e.g. the saved best strategy).
+            cands.insert(0, (dict(start["params"]), start["deck"]))
         while len(cands) < population:
-            cands.append((mutate(DEFAULT_PARAMS, rng, 0.3), rng.choice(decks)))
+            base = start["params"] if start else DEFAULT_PARAMS
+            cands.append((mutate(base, rng, 0.3), rng.choice(decks)))
         elite, best = [], None
         for gen in range(generations):
-            scores = evaluate(cands, level, games, seed + gen, pool)
+            scores = evaluate(cands, level, games, seed + gen, pool, agent)
             ranked = sorted(zip(scores, cands), key=lambda x: -x[0]["trophies_per_hour"])
             # Re-evaluate survivors each generation so lucky scores don't stick.
             elite = ranked[: max(2, population // 4)]
@@ -98,12 +102,12 @@ def tune(generations=8, population=16, games=48, level=11.0, seed=0,
         # The untuned defaults for each elite deck are included as a baseline.
         final = [c for _, c in elite]
         final += [(dict(DEFAULT_PARAMS), d) for d in sorted({c[1] for c in final})]
-        scores = evaluate(final, level, games * 4, seed + 999, pool)
+        scores = evaluate(final, level, games * 4, seed + 999, pool, agent)
         s, (params, deck) = max(zip(scores, final), key=lambda x: x[0]["trophies_per_hour"])
     finally:
         pool.close()
         pool.join()
-    return {"deck": deck, "cards": DECKS[deck], "params": params,
+    return {"agent": agent, "deck": deck, "cards": DECKS[deck], "params": params,
             "win_rate": s["win_rate"], "trophies_per_hour": s["trophies_per_hour"]}
 
 

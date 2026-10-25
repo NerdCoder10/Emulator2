@@ -1,6 +1,6 @@
 import unittest
 
-from crsim.agents import IdleAgent, RandomAgent, SimpleAgent, StrategicAgent
+from crsim.agents import IdleAgent, PlannerAgent, RandomAgent, SimpleAgent, StrategicAgent
 from crsim.cards import CARDS, DECKS
 from crsim.engine import Action, Battle, legal_placement
 from crsim.ladder import arena_for, gate_for, run_ladder
@@ -68,6 +68,38 @@ class EngineTests(unittest.TestCase):
         r = Battle([DECKS["starter"]] * 2, [RandomAgent(seed=1), RandomAgent(seed=2)],
                    seed=2).run()
         self.assertIn(r.winner, (-1, 0, 1))
+
+
+class PlannerTests(unittest.TestCase):
+    def test_sandbox_matches_real_battle(self):
+        # With no further plays, the sandbox must evolve exactly like the real battle.
+        b = Battle([DECKS["giant_beatdown"], DECKS["starter"]],
+                   [IdleAgent(), IdleAgent()], seed=0)
+        b.play(0, Action(b.players[0].hand[0].name, 3.5, 10.0))
+        b.players[1].elixir = 10
+        card = next(c for c in b.players[1].hand if c.kind != "spell")
+        b.play(1, Action(card.name, 3.5, 14.0))
+        for _ in range(30):
+            b.step()
+        sb = Battle.from_observation(b.observe(0))
+        for _ in range(60):
+            b.step()
+            sb.step()
+        real = sorted((e.id, round(e.hp, 3), round(e.x, 3)) for e in b.entities
+                      if e.kind != "tower")
+        sim = sorted((e.id, round(e.hp, 3), round(e.x, 3)) for e in sb.entities
+                     if e.kind != "tower")
+        self.assertEqual(real, sim)
+        self.assertEqual(sorted(round(t.hp, 3) for t in b.towers[1].values()),
+                         sorted(round(t.hp, 3) for t in sb.towers[1].values()))
+
+    def test_planner_beats_heuristic_agent(self):
+        wins = 0
+        for seed in range(6):
+            r = Battle([DECKS["pekka_control"], DECKS["giant_beatdown"]],
+                       [PlannerAgent(), StrategicAgent()], seed=seed).run()
+            wins += r.winner == 0
+        self.assertGreaterEqual(wins, 4)
 
 
 class LadderTests(unittest.TestCase):

@@ -225,6 +225,63 @@ class Battle:
             if hasattr(a, "reset"):
                 a.reset(p)
 
+    @classmethod
+    def from_observation(cls, obs, enemy_spells=(), my_spells=()):
+        """Rebuild the visible state as a sandbox battle, seen from `obs.player`.
+
+        In the sandbox the observing player is player 0 and nobody makes new
+        plays, so it can be stepped forward to evaluate candidate actions.
+        Spells are (land_time, owner, card, x, y, mult) in the observer's frame.
+        """
+        b = cls.__new__(cls)
+        b.rng = random.Random(0)
+        b.agents = None
+        b.t = obs.time
+        b.next_id = 1 << 30
+        b.entities, b.spells = [], []
+        b.crowns = list(obs.crowns)
+        b.winner = None
+        b.record, b.frames = False, []
+        b.players = [PlayerState(deck=[], level=LEVEL_BASE, elixir=obs.elixir),
+                     PlayerState(deck=[], level=LEVEL_BASE, elixir=0.0)]
+        b.towers = [{}, {}]
+        for owner, towers in ((0, obs.my_towers), (1, obs.enemy_towers)):
+            for role, tv in towers.items():
+                if not tv.alive:
+                    continue
+                st = TOWER_STATS["king" if role == "king" else "princess"]
+                m = tv.max_hp / st["hp"]
+                e = Entity(b._id(), owner, f"{role} tower", "tower", tv.x, tv.y,
+                           tv.max_hp, st["damage"] * m, st["hit_speed"], st["range"],
+                           st["range"], 0.0, "air_ground", size=st["size"], role=role)
+                e.hp = tv.hp
+                e.active = tv.active
+                b.towers[owner][role] = e
+                b.entities.append(e)
+        for owner, units in ((0, obs.my_units), (1, obs.enemy_units)):
+            for u in units:
+                c = u.card
+                m = u.max_hp / c.hp
+                e = Entity(u.id, owner, c.name, c.kind, u.x, u.y, u.max_hp, c.damage * m,
+                           c.hit_speed, c.range, c.sight, c.speed, c.targets, air=c.air,
+                           splash=c.splash, size=UNIT_SIZE[c.kind],
+                           deploy=0.5 if u.deploying else 0.0,
+                           decay=(u.max_hp / c.lifetime) if c.lifetime else 0.0,
+                           card=c, jumps=c.jumps_river, value=c.cost / c.count)
+                e.hp = u.hp
+                b.entities.append(e)
+        for spell in list(enemy_spells) + list(my_spells):
+            if spell[0] > obs.time:
+                b.spells.append(list(spell))
+        return b
+
+    def inject(self, p, card, x, y, mult=1.0):
+        """Deploy `card` for player `p` at world (x, y) without elixir/hand checks."""
+        if card.kind == "spell":
+            self.spells.append([self.t + card.travel, p, card, x, y, mult])
+        else:
+            self._spawn(p, card, x, y, mult)
+
     # ------------------------------------------------------------------ helpers
     def _id(self):
         self.next_id += 1
@@ -318,7 +375,7 @@ class Battle:
 
     def step(self):
         tick = int(round(self.t / DT))
-        if tick % int(round(AGENT_INTERVAL / DT)) == 0:
+        if self.agents is not None and tick % int(round(AGENT_INTERVAL / DT)) == 0:
             for p in (0, 1):
                 action = self.agents[p].act(self.observe(p))
                 if action is not None:

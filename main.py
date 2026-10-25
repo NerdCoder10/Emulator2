@@ -10,7 +10,7 @@ import argparse
 import os
 import random
 
-from crsim.agents import AGENTS, StrategicAgent
+from crsim.agents import AGENTS, PlannerAgent, StrategicAgent
 from crsim.cards import DECKS
 from crsim.engine import Battle
 from crsim.ladder import arena_for, opponent_for, run_ladder
@@ -25,13 +25,20 @@ def load_strategy(path):
     return None, None
 
 
+AI_AGENTS = {"planner": PlannerAgent, "strategic": StrategicAgent}
+
+
+def make_ai(a, params):
+    return lambda: AI_AGENTS[a.agent](params)
+
+
 def cmd_battle(a):
     deck, params = load_strategy(a.strategy)
     deck = a.deck or deck or "giant_beatdown"
     opp_deck = a.opponent_deck or random.Random(a.seed).choice(sorted(DECKS))
     opp_cls = AGENTS[a.opponent]
     opp = opp_cls(seed=a.seed) if a.opponent in ("random", "simple") else opp_cls()
-    b = Battle([DECKS[deck], DECKS[opp_deck]], [StrategicAgent(params), opp],
+    b = Battle([DECKS[deck], DECKS[opp_deck]], [make_ai(a, params)(), opp],
                levels=(a.level, a.opponent_level), seed=a.seed, record=bool(a.replay))
     r = b.run()
     outcome = {0: "WIN", 1: "LOSS", -1: "DRAW"}[r.winner]
@@ -64,7 +71,7 @@ def cmd_showcase(a):
     for trophies in a.trophies:
         rng = random.Random(a.seed * 7919 + trophies)
         opp, opp_cards, opp_level = opponent_for(trophies, rng)
-        r = Battle([DECKS[deck], opp_cards], [StrategicAgent(params), opp],
+        r = Battle([DECKS[deck], opp_cards], [make_ai(a, params)(), opp],
                    levels=(a.level, opp_level), seed=rng.randrange(1 << 30), record=True).run()
         meta = game_meta(r, deck, a.level, deck_name(opp_cards), opp_level, opp.name, trophies)
         print(f"{trophies:5d} trophies ({arena_for(trophies)}): {meta['result']} "
@@ -76,7 +83,9 @@ def cmd_showcase(a):
 
 def cmd_tune(a):
     best = tuning.tune(generations=a.generations, population=a.population,
-                       games=a.games, level=a.level, seed=a.seed, workers=a.workers)
+                       games=a.games, level=a.level, seed=a.seed, workers=a.workers,
+                       agent=a.agent, decks=a.decks,
+                       start=tuning.load(a.start) if a.start and os.path.exists(a.start) else None)
     tuning.save(best, a.out)
     print(f"\nbest deck: {best['deck']} {best['cards']}")
     print(f"win rate {best['win_rate']:.1%}, {best['trophies_per_hour']:+.0f} trophies/hour")
@@ -86,9 +95,9 @@ def cmd_tune(a):
 def cmd_ladder(a):
     deck, params = load_strategy(a.strategy)
     deck = a.deck or deck or "giant_beatdown"
-    print(f"climbing with {deck} (level {a.level}) "
+    print(f"climbing with {deck} (level {a.level}), {a.agent} AI, "
           f"{'tuned' if params else 'default'} strategy")
-    rep = run_ladder(lambda: StrategicAgent(params), DECKS[deck], level=a.level,
+    rep = run_ladder(make_ai(a, params), DECKS[deck], level=a.level,
                      battles=a.battles, seed=a.seed, plateau=a.plateau, log=print)
     print(rep.summary())
 
@@ -111,6 +120,11 @@ def main():
     t.add_argument("--games", type=int, default=48, help="games per candidate")
     t.add_argument("--workers", type=int)
     t.add_argument("--out", default="best_strategy.json")
+    t.add_argument("--agent", default="planner", choices=sorted(AI_AGENTS))
+    t.add_argument("--decks", nargs="+", choices=sorted(DECKS),
+                   help="restrict the search to these decks")
+    t.add_argument("--start", default="best_strategy.json",
+                   help="seed the search with this saved strategy, if it exists")
 
     lad = sub.add_parser("ladder", help="climb the trophy road")
     lad.add_argument("--deck", choices=sorted(DECKS))
@@ -128,6 +142,8 @@ def main():
         p.add_argument("--level", type=float, default=11, help="your card level")
         p.add_argument("--seed", type=int, default=0)
     for p in (b, lad, sh):
+        p.add_argument("--agent", default="planner", choices=sorted(AI_AGENTS),
+                       help="planner = look-ahead search (default); strategic = heuristic only")
         p.add_argument("--strategy", default="best_strategy.json",
                        help="tuned strategy JSON (from `tune`)")
 
