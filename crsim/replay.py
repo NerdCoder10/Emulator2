@@ -34,12 +34,20 @@ def pack_game(frames, meta):
     return {"meta": meta, "names": names, "frames": out, "plays": plays, "spells": spells}
 
 
-def export_games(games, path):
-    """games: list of (frames, meta) pairs. meta keys are shown in the viewer."""
+def export_games(games, path, standalone=True):
+    """games: list of (frames, meta) pairs. meta keys are shown in the viewer.
+
+    standalone=True writes a complete HTML document to open from disk;
+    False writes just the page body, for hosts that add their own skeleton.
+    """
     data = [pack_game(fr, meta) for fr, meta in games]
     with open(VIEWER) as f:
         html = f.read()
     html = html.replace("/*__GAMES__*/[]", json.dumps(data, separators=(",", ":")))
+    if standalone:
+        html = ('<!doctype html>\n<html lang="en"><head><meta charset="utf-8">\n'
+                '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+                '</head><body>\n' + html + '\n</body></html>\n')
     with open(path, "w") as f:
         f.write(html)
 

@@ -9,6 +9,22 @@ trophy road as **far and as efficiently** (trophies per hour) as possible.
 
 Pure Python 3.10+, no dependencies.
 
+## Watch it on your computer
+
+You need Python 3.10 or newer (no other installs).
+
+```bash
+git clone https://github.com/NerdCoder10/Emulator2.git
+cd Emulator2
+git checkout claude/sharp-maxwell-m7ruez
+python main.py watch
+```
+
+`watch` simulates 5 fresh games starting at 8,500 trophies (about 1 s each)
+and opens them in your browser. Each run plays new games. Use `--games 10`
+for more, `--trophies 4000` for a different level, or `--seed 42` to replay
+the same set. On Windows, use `py` if `python` isn't found.
+
 ## Quick start
 
 ```bash

@@ -5,6 +5,7 @@ Examples:
     python main.py tune --generations 8 --out best_strategy.json
     python main.py ladder --strategy best_strategy.json --battles 400
     python main.py showcase --out battles.html
+    python main.py watch          # play new games and open them in your browser
 """
 import argparse
 import os
@@ -63,13 +64,12 @@ def game_meta(r, deck, level, opp_deck, opp_level, opp_agent, trophies=None):
             "opp_agent": opp_agent, "trophies": trophies}
 
 
-def cmd_showcase(a):
-    """Record ladder games at several trophy counts and write a replay page."""
+def record_games(a, trophy_list, seed):
     deck, params = load_strategy(a.strategy)
     deck = a.deck or deck or "giant_beatdown"
     games = []
-    for trophies in a.trophies:
-        rng = random.Random(a.seed * 7919 + trophies)
+    for trophies in trophy_list:
+        rng = random.Random(seed * 7919 + trophies)
         opp, opp_cards, opp_level = opponent_for(trophies, rng)
         r = Battle([DECKS[deck], opp_cards], [make_ai(a, params)(), opp],
                    levels=(a.level, opp_level), seed=rng.randrange(1 << 30), record=True).run()
@@ -77,8 +77,27 @@ def cmd_showcase(a):
         print(f"{trophies:5d} trophies ({arena_for(trophies)}): {meta['result']} "
               f"{r.crowns[0]}-{r.crowns[1]} vs {meta['opp_deck']} ({opp.name}, lv {opp_level:.1f})")
         games.append((r.frames, meta))
-    export_games(games, a.out)
+    return games
+
+
+def cmd_showcase(a):
+    """Record ladder games at several trophy counts and write a replay page."""
+    export_games(record_games(a, a.trophies, a.seed), a.out, standalone=not a.fragment)
     print(f"replays written to {a.out}")
+
+
+def cmd_watch(a):
+    """Play fresh games and open them in the browser."""
+    import time
+    import webbrowser
+    seed = a.seed if a.seed is not None else int(time.time())
+    print(f"simulating {a.games} games (seed {seed}), about 1 s each...")
+    trophies = [a.trophies + 100 * i for i in range(a.games)]
+    export_games(record_games(a, trophies, seed), a.out)
+    path = os.path.abspath(a.out)
+    print(f"opening {path}")
+    if not webbrowser.open("file://" + path):
+        print("could not open a browser; open the file above manually")
 
 
 def cmd_tune(a):
@@ -137,11 +156,19 @@ def main():
     sh.add_argument("--trophies", type=int, nargs="+",
                     default=[1500, 4500, 6500, 7500, 8000, 9000])
     sh.add_argument("--out", default="battles.html")
+    sh.add_argument("--fragment", action="store_true",
+                    help="write only the page body (for hosts that add their own <html>)")
 
-    for p in (b, t, lad, sh):
+    w = sub.add_parser("watch", help="play new games and open them in your browser")
+    w.add_argument("--games", type=int, default=5)
+    w.add_argument("--trophies", type=int, default=8500, help="trophies of the first game")
+    w.add_argument("--out", default="watch.html")
+    w.add_argument("--deck", choices=sorted(DECKS))
+
+    for p in (b, t, lad, sh, w):
         p.add_argument("--level", type=float, default=11, help="your card level")
-        p.add_argument("--seed", type=int, default=0)
-    for p in (b, lad, sh):
+        p.add_argument("--seed", type=int, default=None if p is w else 0)
+    for p in (b, lad, sh, w):
         p.add_argument("--agent", default="planner", choices=sorted(AI_AGENTS),
                        help="planner = look-ahead search (default); strategic = heuristic only")
         p.add_argument("--strategy", default="best_strategy.json",
@@ -149,7 +176,7 @@ def main():
 
     a = ap.parse_args()
     {"battle": cmd_battle, "tune": cmd_tune, "ladder": cmd_ladder,
-     "showcase": cmd_showcase}[a.cmd](a)
+     "showcase": cmd_showcase, "watch": cmd_watch}[a.cmd](a)
 
 
 if __name__ == "__main__":
