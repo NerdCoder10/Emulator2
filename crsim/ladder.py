@@ -19,6 +19,10 @@ ARENAS = [
 GATE_LIMIT = 5000          # arenas below this have trophy gates (cannot drop out)
 TROPHY_CAP = 9000.0        # trophy count at which opponents are at full strength
 WIN_TROPHIES, LOSS_TROPHIES = 30, 30
+# Ladder opponents play the original heuristic, without the guide tactics,
+# so the difficulty curve stays fixed while our AI improves.
+OPPONENT_PARAMS = {"g_cycle": 0.0, "g_punish": 0.0, "g_counterpush": 0.0,
+                   "g_x2_bridge": 0.0}
 MATCH_OVERHEAD = 45.0      # seconds of matchmaking/loading per battle
 
 
@@ -50,7 +54,7 @@ def opponent_for(trophies, rng):
     elif roll < max(0.0, 0.9 - 2.5 * s):
         agent = SimpleAgent(seed=seed)
     else:
-        agent = StrategicAgent(seed=seed, mistake=0.45 * (1 - s) ** 1.5 + 0.03,
+        agent = StrategicAgent(OPPONENT_PARAMS, seed=seed, mistake=0.45 * (1 - s) ** 1.5 + 0.03,
                                reaction=1.2 * (1 - s) + 0.2)
     return agent, deck, level
 

@@ -247,17 +247,16 @@ class Battle:
         b.towers = [{}, {}]
         for owner, towers in ((0, obs.my_towers), (1, obs.enemy_towers)):
             for role, tv in towers.items():
-                if not tv.alive:
-                    continue
                 st = TOWER_STATS["king" if role == "king" else "princess"]
                 m = tv.max_hp / st["hp"]
                 e = Entity(b._id(), owner, f"{role} tower", "tower", tv.x, tv.y,
                            tv.max_hp, st["damage"] * m, st["hit_speed"], st["range"],
                            st["range"], 0.0, "air_ground", size=st["size"], role=role)
-                e.hp = tv.hp
+                e.hp = tv.hp if tv.alive else 0.0
                 e.active = tv.active
                 b.towers[owner][role] = e
-                b.entities.append(e)
+                if tv.alive:            # destroyed towers stay as dead placeholders
+                    b.entities.append(e)
         for owner, units in ((0, obs.my_units), (1, obs.enemy_units)):
             for u in units:
                 c = u.card
@@ -316,7 +315,7 @@ class Battle:
         units = [e for e in self.entities if e.kind != "tower"]
         return Observation(
             player=p, time=self.t, elixir=ps.elixir, elixir_mult=self.elixir_mult(),
-            hand=list(ps.hand), next_card=ps.queue[0],
+            hand=list(ps.hand), next_card=ps.queue[0] if ps.queue else None,
             my_units=[uview(e) for e in units if e.owner == p],
             enemy_units=[uview(e) for e in units if e.owner == q],
             my_towers={r: tview(e) for r, e in self.towers[p].items()},
@@ -338,7 +337,8 @@ class Battle:
         ps.spent += card.cost
         ps.plays += 1
         ps.hand.remove(card)
-        ps.hand.append(ps.queue.pop(0))
+        if ps.queue:
+            ps.hand.append(ps.queue.pop(0))
         ps.queue.append(card)
         self.players[1 - p].seen.append((card, action.x, HEIGHT - action.y))
         x, y = to_local(action.x, action.y, p)

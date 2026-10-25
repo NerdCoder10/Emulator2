@@ -19,7 +19,7 @@ python main.py battle --opponent strategic --opponent-deck hog_cycle --replay re
 python main.py tune --out best_strategy.json
 
 # Climb the trophy road with the tuned strategy and report how far it gets
-python main.py ladder --battles 500
+python main.py ladder --battles 600
 
 # Record games across the ladder into one replay page (Battle Theater)
 python main.py showcase --out battles.html
@@ -47,10 +47,15 @@ waiting, 8 seconds forward. Candidates are every affordable card at several
 spots (the heuristic's spot, on the lead attacker, in front of it, and the
 central building pull), plus spells on the most valuable clusters. Each
 outcome is scored in elixir terms: elixir kept, unit value alive on each
-side (enemy units left in our half count extra), tower hp lost and taken,
-and crowns. The best play is made only if it beats waiting. Attacks stay
-heuristic, because a sandbox opponent that never plays a card would make
-every attack look free.
+side, tower hp lost and taken, and crowns. The best play is made only if it
+beats waiting.
+
+**Opponent model (cycle counting).** Inside each look-ahead the opponent is
+not idle. The AI infers their hand from the cycle: the last 4 distinct cards
+they played sit in their queue, and every other card seen so far is in hand.
+It also tracks their elixir from their spending. A copy of the heuristic AI
+then plays that hand for them, after a 0.6 s reaction delay. So a Skeleton
+Army against a P.E.K.K.A scores badly when the opponent is holding Zap.
 
 ### The heuristic AI (`StrategicAgent`)
 Each decision tick (every 0.2 s) it works through these steps in order:
@@ -60,17 +65,44 @@ Each decision tick (every 0.2 s) it works through these steps in order:
 4. **Attack**: play the win condition in the weaker lane, or the pocket once a tower is down, when elixir is high or the estimated opponent elixir is low (it tracks the opponent's spending).
 5. **Leak guard**: never sit at full elixir.
 
+### Strategies from creator and pro guides
+YouTube blocks automated access, so video transcripts couldn't be read
+directly. The tactics came from written guides that summarize what top
+players and creators teach. Each was implemented as a switchable behaviour
+and measured on 120–200 games at 8,500 and 9,000 trophies:
+
+| Guide tactic | Where | Result |
+| --- | --- | --- |
+| Count the opponent's cycle and play around their answers | Opponent model in the planner | **Kept**: 8,500 win rate 50% → 57–59% |
+| Counter-push with surviving defenders (`g_counterpush`) | Offense | **Kept**: removing it costs about 4 points |
+| Push when their counter is out of cycle (`g_cycle`) | Offense | Off: no gain |
+| Opponent spends 6+ → push the opposite lane (`g_punish`) | Offense | Off: no gain; it spends elixir the defence needs |
+| Double elixir: tank at the bridge, not the back (`g_x2_bridge`) | Offense | Off: no gain |
+| Simulating attacks against the modelled opponent (`plan_attacks`) | Planner | Off: no gain |
+
+Sources: [TrophyCoach elixir guide](https://trophycoach.com/guides/elixir-management-mastery-guide),
+[jeu.video timing guide](https://jeu.video/en/guide/clash-royale-ladder-save-elixir-push-right-time),
+[Metafy card-counting guide](https://metafy.gg/guides/view/elixir-and-card-counting-pro-guide-MnGsVkzCxU5),
+[Guild Order elixir wiki](https://guildorder.com/games/clash_royale/wiki/elixir-management-and-cycling),
+[RoyaleTracker P.E.K.K.A guide](https://royaletracker.gg/guides/pekka-bridge-spam-deck-clash-royale),
+[Clash Royale Wiki deck page](https://clashroyale.fandom.com/wiki/Deck:3M_Miner_Ram).
+
+Ladder opponents keep the original heuristic (`OPPONENT_PARAMS` in
+`crsim/ladder.py`), so the difficulty curve is the same in every result below.
+
 ### Efficiency metric
 Net trophies / (battle time + 45 s overhead per match). Fast 3-crown wins
 score better than slow overtime wins.
 
-## Results (level-11 cards, P.E.K.K.A control, 500 battles, seeds 0–3)
+## Results (level-11 cards, P.E.K.K.A control, seeds 0–3)
 
-| AI | Win rate at 7,500 | Win rate at 8,000 | Peak trophies | Arena |
+| AI | Win rate at 8,500 | Win rate at 9,000 | Peak trophies | Arena |
 | --- | --- | --- | --- | --- |
-| Heuristic (`--agent strategic`) | 40% | 33% | 6,480–6,810 | Royal Crypt / Silent Sanctuary |
-| **Look-ahead planner** (default) | **67%** | **57%** | **8,070–8,430** | **PANCAKES!** |
+| Heuristic (`--agent strategic`), 500 battles | – | – | 6,480–6,810 | Royal Crypt / Silent Sanctuary |
+| Planner, 500 battles | 51% | 40% | 8,070–8,430 | PANCAKES! |
+| **Planner + opponent model + counter-push** (default), 600 battles | **60%** | **49%** | **8,820–9,240** | **PANCAKES! / Legendary Arena** |
 
-Every planner run passes 7,500 trophies and is still climbing at 500
-battles, against opponents whose cards are 2–3 levels higher. A battle takes
-about 0.6 s to simulate with the planner, versus 0.1 s for the heuristic.
+Every run of the current AI passes 8,500 trophies, and one reaches Legendary
+Arena (9,000+). The climb levels off near 9,000, where opponents have
+level-14 cards against our level 11. A battle takes about 1 s to simulate
+with the planner, versus 0.1 s for the heuristic.

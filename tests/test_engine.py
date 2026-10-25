@@ -93,6 +93,16 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(sorted(round(t.hp, 3) for t in b.towers[1].values()),
                          sorted(round(t.hp, 3) for t in sb.towers[1].values()))
 
+    def test_opponent_cycle_inference(self):
+        a = PlannerAgent()
+        a.reset(0)
+        order = ["Giant", "Musketeer", "Knight", "Arrows", "Minions", "Giant", "Fireball"]
+        a.opp_order = [CARDS[n] for n in order]
+        hand, queue = a._opp_cycle()
+        # The last 4 distinct plays are out of hand, oldest first.
+        self.assertEqual([c.name for c in queue], ["Arrows", "Minions", "Giant", "Fireball"])
+        self.assertEqual(sorted(c.name for c in hand), ["Knight", "Musketeer"])
+
     def test_planner_beats_heuristic_agent(self):
         wins = 0
         for seed in range(6):

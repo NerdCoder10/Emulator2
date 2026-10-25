@@ -20,6 +20,15 @@ def clamp(v, lo, hi):
     return lo if v < lo else hi if v > hi else v
 
 
+class _Probe:
+    """Stand-in for one of our units when scoring enemy counters against it."""
+
+    def __init__(self, card):
+        self.card = card
+        self.hp = self.max_hp = card.total_hp
+        self.air = card.air
+
+
 class Agent:
     name = "agent"
 
@@ -97,6 +106,16 @@ DEFAULT_PARAMS = {
     "cost_weight": 0.25,      # how strongly defensive picks prefer cheap cards
     "leak_guard": 9.6,        # never sit above this elixir
     "spell_tower_bonus": 1.0, # weight of chip damage when valuing spells
+    # Tactics taken from pro/creator guides (flags: > 0.5 means on).
+    # Measured at 8,500-9,000 trophies: counter-push helps; the other three cost
+    # elixir the defence needs and are off by default.
+    "g_cycle": 0.0,           # count the opponent's cycle; push when their counter is out
+    "g_punish": 0.0,          # opponent spends big -> push the opposite lane now
+    "g_counterpush": 1.0,     # put the attacker behind surviving defenders
+    "g_x2_bridge": 0.0,       # in double elixir, tanks go to the bridge, not the back
+    "punish_spend": 6.0,      # enemy elixir spent in the last 4 s that opens a punish
+    "punish_min_elixir": 5.0, # our elixir needed to punish
+    "counter_threshold": 0.8, # matchup score at which an enemy card "counters" ours
 }
 
 
@@ -127,6 +146,8 @@ class StrategicAgent(Agent):
         self.last_t = -1.0
         self.next_ok = 0.0
         self.handled = {}           # enemy unit id -> time we last answered it
+        self.opp_order = []         # cards the opponent played, oldest first
+        self.opp_spends = []        # (time, cost) of opponent plays
 
     # ------------------------------------------------------------------ utilities
     def _track_enemy(self, obs):
@@ -134,8 +155,79 @@ class StrategicAgent(Agent):
         self.last_t = obs.time
         self.enemy_elixir = min(MAX_ELIXIR,
                                 self.enemy_elixir + dt / ELIXIR_PERIOD * obs.elixir_mult)
-        for card, _, _ in obs.enemy_plays:
+        for card, x, y in obs.enemy_plays:
             self.enemy_elixir = max(0.0, self.enemy_elixir - card.cost)
+            self.opp_order.append(card)
+            self.opp_spends.append((obs.time, card.cost, x))
+
+    # ------------------------------------------------------------------ guide tactics
+    def _opp_hand(self):
+        """The opponent's current hand, once all 8 of their cards have been seen.
+
+        Played cards go to the back of a 4-card queue, so the last 4 plays are
+        exactly the cards they cannot play right now.
+        """
+        deck = {c.name: c for c in self.opp_order}
+        if len(deck) < 8:
+            return None
+        out = {c.name for c in self.opp_order[-4:]}
+        return [c for n, c in deck.items() if n not in out]
+
+    def _counter_in_hand(self, card):
+        """Can the opponent answer `card` well with what they hold right now?"""
+        hand = self._opp_hand()
+        if hand is None:
+            return True
+        probe = [_Probe(card)]
+        for c in hand:
+            if c.cost <= self.enemy_elixir + 1 and \
+                    (c.kind == "spell" and card.count >= 3 or
+                     self._matchup(c, probe) >= self.p["counter_threshold"]):
+                return True
+        return False
+
+    def _attackers(self, hand, elixir):
+        """Cards that can carry an attack: win conditions, else tanks/heavy hitters."""
+        cards = [c for c in hand if c.kind == "troop" and c.cost <= elixir]
+        wins = [c for c in cards if c.is_win_condition]
+        return wins or [c for c in cards if "tank" in c.roles or
+                        ("dps" in c.roles and c.cost >= 4)]
+
+    def _guide_offense(self, obs, threats):
+        p, hand, elixir = self.p, obs.hand, obs.elixir
+        on = lambda k: p[k] > 0.5
+        attackers = self._attackers(hand, elixir)
+        if not attackers:
+            return None
+        card = max(attackers, key=lambda c: (c.is_win_condition, c.total_hp))
+        et = obs.enemy_towers
+        weak = min(("left", "right"),
+                   key=lambda l: (et[l].hp / et[l].max_hp) if et[l].alive else -1.0)
+
+        # Counter-push: survivors near the river carry the attacker in for free.
+        if on("g_counterpush") and not threats:
+            survivors = [u for u in obs.my_units if u.kind == "troop" and u.card
+                         and u.hp > 0.5 * u.max_hp and 10.0 <= u.y <= 18.0]
+            if sum(u.card.cost / u.card.count for u in survivors) >= 3:
+                lead = max(survivors, key=lambda u: u.y)
+                y = clamp(lead.y - 1.5, 1.0, RIVER_LO)
+                return Action(card.name, clamp(lead.x, 0.5, 17.5), y)
+
+        # Punish: they just spent big, so hit the lane they are not in.
+        recent = sum(c for t, c, _ in self.opp_spends if obs.time - t <= 4.0)
+        if on("g_punish") and recent >= p["punish_spend"] and \
+                elixir >= max(p["punish_min_elixir"], card.cost):
+            their = [u.x for u in obs.enemy_units if u.kind == "troop"]
+            lane = weak
+            if their:
+                lane = "right" if sum(their) / len(their) < 9 else "left"
+            return Action(card.name, LANE_X[lane], 14.0)
+
+        # Out of cycle: their answer to our attacker is not in hand.
+        if on("g_cycle") and not threats and elixir >= card.cost + 1 and \
+                not self._counter_in_hand(card):
+            return Action(card.name, LANE_X[weak], 14.0)
+        return None
 
     @staticmethod
     def _pushes(units):
@@ -319,6 +411,9 @@ class StrategicAgent(Agent):
     def _offense(self, obs, threats):
         """Steps 3-5: support a push, start an attack, or avoid leaking elixir."""
         hand, elixir, p = obs.hand, obs.elixir, self.p
+        guided = self._guide_offense(obs, threats)
+        if guided is not None:
+            return guided
         # 3. Support an existing push.
         pushers = [u for u in obs.my_units
                    if u.kind == "troop" and u.card and u.hp > 0.4 * u.max_hp
@@ -348,7 +443,9 @@ class StrategicAgent(Agent):
             lx = LANE_X[target_lane]
             if pocket:
                 return Action(card.name, lx + (1.5 if target_lane == "left" else -1.5), 20.5)
-            if "tank" in card.roles and card.speed < 1.0 and p["back_tank"] > 0.5:
+            x2_bridge = p["g_x2_bridge"] > 0.5 and obs.elixir_mult >= 2
+            if "tank" in card.roles and card.speed < 1.0 and p["back_tank"] > 0.5 \
+                    and not x2_bridge:
                 return Action(card.name, lx + (1.0 if target_lane == "left" else -1.0), 1.5)
             if card.air:
                 return Action(card.name, lx, 13.0)
@@ -373,10 +470,19 @@ PLANNER_PARAMS = {
     "plan_interval": 0.6,     # seconds between plans while nothing is played
     "tower_value": 3.0,       # elixir per 1000 tower hp
     "crown_value": 6.0,       # extra elixir-equivalent for taking a tower
-    "danger": 0.5,            # extra weight on enemy units left in our half
+    "danger": 0.0,            # extra weight on enemy units left in our half
     "min_gain": 0.3,          # a play must beat waiting by this much
     "max_candidates": 14,
+    "model_opponent": 1.0,    # >0.5: the sandbox opponent answers with its inferred hand
+    "model_delay": 0.6,       # seconds before the modelled opponent can respond
+    "plan_attacks": 0.0,      # >0.5: also search attacks (tested: no gain, off)
+    "attack_horizon": 12.0,   # seconds simulated for attack candidates
+    "attack_interval": 1.0,   # seconds between attack searches
+    "attack_min_elixir": 4.0, # don't search attacks below this elixir
 }
+
+# How the sandbox imagines the opponent: the plain heuristic, reacting a bit late.
+MODEL_PARAMS = {"g_cycle": 0.0, "g_punish": 0.0, "g_counterpush": 0.0, "g_x2_bridge": 0.0}
 
 
 class PlannerAgent(StrategicAgent):
@@ -400,6 +506,7 @@ class PlannerAgent(StrategicAgent):
     def reset(self, player):
         super().reset(player)
         self.next_plan = 0.0
+        self.next_attack = 0.0
         self.my_spells = []         # spells in flight: [land, owner, card, x, y, mult]
         self.enemy_spells = []
 
@@ -433,17 +540,51 @@ class PlannerAgent(StrategicAgent):
             v -= 100.0
         return v
 
-    def _rollout(self, obs, card=None, x=0.0, y=0.0):
+    def _rollout(self, obs, card=None, x=0.0, y=0.0, horizon=None):
         sb = Battle.from_observation(obs, self.enemy_spells, self.my_spells)
         start = [{r: max(t.hp, 0.0) for r, t in sb.towers[o].items()} for o in (0, 1)]
+        if self.plan["model_opponent"] > 0.5:
+            self._add_opponent_model(sb, obs)
         if card is not None:
             sb.inject(0, card, x, y, self._mult(obs.my_towers))
             sb.players[0].elixir -= card.cost
-        for _ in range(int(self.plan["horizon"] / DT)):
+        for _ in range(int((horizon or self.plan["horizon"]) / DT)):
             sb.step()
             if sb.winner is not None:
                 break
         return self._score(sb, start)
+
+    def _opp_cycle(self):
+        """(hand, queue) the opponent most likely holds, from the plays seen so far.
+
+        The last 4 distinct plays sit in the queue in order; every other card
+        we have seen is in hand. Cards never seen are unknown and left out.
+        """
+        queue, names = [], set()
+        for c in reversed(self.opp_order):
+            if c.name not in names:
+                names.add(c.name)
+                queue.insert(0, c)
+            if len(queue) == 4:
+                break
+        seen = {c.name: c for c in self.opp_order}
+        hand = [c for n, c in seen.items() if n not in names][:4]
+        return hand, queue
+
+    def _add_opponent_model(self, sb, obs):
+        hand, queue = self._opp_cycle()
+        if not hand:
+            return
+        ps = sb.players[1]
+        ps.hand, ps.queue = list(hand), list(queue) or list(hand)
+        ps.elixir = self.enemy_elixir
+        ps.level = 11 + math.log(self._mult(obs.enemy_towers)) / math.log(1.1)
+        model = StrategicAgent(MODEL_PARAMS, reaction=0.4)
+        model.reset(1)
+        model.enemy_elixir = obs.elixir
+        model.last_t = obs.time
+        model.next_ok = obs.time + self.plan["model_delay"]   # time to react
+        sb.agents = [IdleAgent(), model]
 
     def _candidates(self, obs, threats):
         cands = []
@@ -479,18 +620,45 @@ class PlannerAgent(StrategicAgent):
         return cands
 
     def _plan(self, obs, threats):
-        cands = self._candidates(obs, threats)
+        return self._search(obs, self._candidates(obs, threats), self.plan["horizon"])
+
+    def _search(self, obs, cands, horizon):
+        """Simulate each candidate (and waiting); return the best that beats waiting."""
         if not cands:
             return None
-        if len(cands) > self.plan["max_candidates"]:
-            cands = cands[: int(self.plan["max_candidates"])]
-        base = self._rollout(obs)
+        cands = cands[: int(self.plan["max_candidates"])]
+        base = self._rollout(obs, horizon=horizon)
         best, best_v = None, base + self.plan["min_gain"]
         for card, x, y in cands:
-            v = self._rollout(obs, card, x, y)
+            v = self._rollout(obs, card, x, y, horizon=horizon)
             if v > best_v:
                 best, best_v = (card, x, y), v
         return best
+
+    def _attack_candidates(self, obs):
+        """Attacks worth simulating: each troop at each bridge or pocket, tanks also
+        behind the king tower, and anything behind units already pushing."""
+        et = obs.enemy_towers
+        cands = []
+        pushers = [u for u in obs.my_units if u.kind == "troop" and u.card
+                   and u.hp > 0.5 * u.max_hp and 8.0 <= u.y <= 24.0]
+        lead = max(pushers, key=lambda u: u.y) if pushers else None
+        for card in obs.hand:
+            if card.kind != "troop" or card.cost > obs.elixir or "cycle" in card.roles:
+                continue
+            for lane in ("left", "right"):
+                lx = LANE_X[lane]
+                if et[lane].alive:
+                    cands.append((card, lx, 14.0))
+                else:
+                    cands.append((card, lx + (1.5 if lane == "left" else -1.5), 20.5))
+                if "tank" in card.roles and card.speed < 1.0:
+                    cands.append((card, lx + (1.0 if lane == "left" else -1.0), 1.5))
+            if lead is not None:
+                y = clamp(lead.y - (3.0 if card.is_ranged else 1.5), 0.5, RIVER_LO)
+                if obs.can_place(card, lead.x, y):
+                    cands.append((card, clamp(lead.x, 0.5, 17.5), y))
+        return cands
 
     # ------------------------------------------------------------------ main loop
     def _track_spells(self, obs):
@@ -521,6 +689,17 @@ class PlannerAgent(StrategicAgent):
             self.next_plan = obs.time + self.plan["plan_interval"]
         if threats:
             return None
+        pl = self.plan
+        if pl["plan_attacks"] > 0.5 and pl["model_opponent"] > 0.5 and \
+                len(self._opp_cycle()[0]) >= 2 and obs.elixir >= pl["attack_min_elixir"]:
+            if obs.time >= self.next_attack:
+                self.next_attack = obs.time + pl["attack_interval"]
+                choice = self._search(obs, self._attack_candidates(obs), pl["attack_horizon"])
+                if choice is not None:
+                    card, x, y = choice
+                    return Action(card.name, x, y)
+            if obs.elixir < self.p["leak_guard"]:
+                return None
         return self._offense(obs, threats)
 
 
